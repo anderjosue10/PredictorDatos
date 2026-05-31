@@ -582,38 +582,47 @@ st.sidebar.markdown(
 
 
 # ==========================================================
-# MODO 1: PREDICCIÓN INDIVIDUAL
+# MODO 1: PREDICCIÓN INDIVIDUAL (CORREGIDO)
 # ==========================================================
 if modo == "🔮 Predicción individual":
     st.markdown('<div class="section-title">📝 Parámetros de Entrada</div>', unsafe_allow_html=True)
     
     col1, col2, col3 = st.columns(3)
     with col1:
-        subtotal = st.number_input("💰 Subtotal", min_value=0.0, value=150.0, step=10.0)
+        subtotal = st.number_input("💰 Subtotal (suma de precios)", min_value=0.0, value=150.0, step=10.0,
+                                   help="Suma de los precios de los exámenes sin impuestos")
     with col2:
-        precio = st.number_input("🏷️ Precio unitario", min_value=0.0, value=75.0, step=5.0)
+        precio = st.number_input("🏷️ Precio promedio por examen", min_value=0.0, value=75.0, step=5.0,
+                                help="Precio promedio de cada examen en la factura")
     with col3:
-        mes = st.selectbox("📅 Mes", options=list(range(1,13)), index=datetime.now().month-1)
+        costo_porcentaje = st.slider("💰 Porcentaje de costo sobre subtotal", min_value=0, max_value=100, value=65, step=5,
+                                     help="¿Qué porcentaje del subtotal representa el costo real?")
     
     col4, col5, col6 = st.columns(3)
     with col4:
-        año = st.number_input("📆 Año", min_value=2020, value=2024, step=1)
+        mes = st.selectbox("📅 Mes", options=list(range(1,13)), index=datetime.now().month-1)
     with col5:
-        dia_semana = st.selectbox("📌 Día semana (0=Lunes,6=Domingo)", options=list(range(7)), index=0)
+        año = st.number_input("📆 Año", min_value=2020, value=2024, step=1)
     with col6:
-        genero_num = st.selectbox("👤 Género", options=[0,1], format_func=lambda x: "Femenino (0)" if x==0 else "Masculino (1)")
+        dia_semana = st.selectbox("📌 Día semana (0=Lunes,6=Domingo)", options=list(range(7)), index=0)
     
     col7, col8 = st.columns(2)
     with col7:
-        tipo_facturacion_num = st.selectbox("📄 Tipo Facturación", options=[1,2,3], 
-                                            format_func=lambda x: {1:"Contado", 2:"Crédito", 3:"Mixto"}.get(x, str(x)))
+        genero_num = st.selectbox("👤 Género", options=[0,1], 
+                                 format_func=lambda x: "Femenino (0)" if x==0 else "Masculino (1)")
     with col8:
-        st.caption("💡 *diferencia_precio y ratio_subtotal_precio se calculan automáticamente*")
+        tipo_facturacion_num = st.selectbox("📄 Tipo Facturación", options=[1,2,3], 
+                                            format_func=lambda x: {1:"PARTICULAR", 2:"EXAMEN", 3:"PARAMETRO"}.get(x, str(x)))
+    
+    # Mostrar información adicional
+    st.info(f"💡 **Cálculo automático:** Diferencia precio = Subtotal - Precio = ${subtotal - precio:.2f} | "
+            f"Ratio = Subtotal/Precio = {(subtotal/precio if precio>0 else 0):.2f}")
     
     diferencia_precio = subtotal - precio
     ratio_subtotal_precio = subtotal / precio if precio != 0 else 0
     
     if st.button("🔍 Predecir Operación", use_container_width=True):
+        # Preparar datos para el modelo
         datos = crear_fila_producto(subtotal, precio, mes, año, dia_semana, genero_num, 
                                     tipo_facturacion_num, diferencia_precio, ratio_subtotal_precio)
         datos_modelo = preparar_datos(datos)
@@ -622,11 +631,46 @@ if modo == "🔮 Predicción individual":
             with st.spinner("🔄 Procesando predicción..."):
                 time.sleep(0.5)
                 prediccion = modelo.predict(datos_modelo)
-                resultado = max(0, float(prediccion[0]))
+                total_factura = max(0, float(prediccion[0]))  # ✅ Este es el TOTAL predicho
             
-            _, costo_total, _, ganancia, margen = calcular_indicadores(datos.iloc[0])
-            estado_comercial, confianza_texto = generar_estado_comercial(ganancia, margen)
-            confianza_visual = max(0, min(100, margen + 40))
+            # ✅ CORREGIDO: Calcular correctamente costo y ganancia
+            costo_real = subtotal * (costo_porcentaje / 100)  # Costo basado en el subtotal
+            ganancia = total_factura - costo_real  # Ganancia = Total facturado - Costo real
+            margen = (ganancia / total_factura) * 100 if total_factura > 0 else 0
+            
+            # Evaluar rentabilidad con criterios realistas
+            if ganancia > 0 and margen >= 40:
+                estado_comercial = "Excelente"
+                nivel_rentabilidad = "Alta"
+                color_box = "green"
+                emoji = "🏆"
+            elif ganancia > 0 and margen >= 25:
+                estado_comercial = "Rentable"
+                nivel_rentabilidad = "Media-Alta"
+                color_box = "green"
+                emoji = "✅"
+            elif ganancia > 0 and margen >= 10:
+                estado_comercial = "Aceptable"
+                nivel_rentabilidad = "Media"
+                color_box = "yellow"
+                emoji = "⚠️"
+            elif ganancia > 0 and margen > 0:
+                estado_comercial = "Margen bajo"
+                nivel_rentabilidad = "Media-Baja"
+                color_box = "yellow"
+                emoji = "📊"
+            elif ganancia == 0:
+                estado_comercial = "Punto de equilibrio"
+                nivel_rentabilidad = "Baja"
+                color_box = "yellow"
+                emoji = "⚖️"
+            else:
+                estado_comercial = "Pérdida"
+                nivel_rentabilidad = "Muy Baja"
+                color_box = "red"
+                emoji = "❌"
+            
+            confianza_visual = max(0, min(100, margen + 20))
             
             st.divider()
             st.markdown('<div class="section-title">📊 Resultado de la Predicción</div>', unsafe_allow_html=True)
@@ -636,29 +680,88 @@ if modo == "🔮 Predicción individual":
                 st.markdown(
                     f"""
                     <div class="result-card">
-                        <div class="prediction-label">💵 Total Factura Estimado</div>
-                        <div class="prediction-value">${resultado:,.2f}</div>
+                        <div class="prediction-label">💵 Total Factura Estimado (Modelo XGBoost)</div>
+                        <div class="prediction-value">${total_factura:,.2f}</div>
                         <div class="prediction-sub">Clasificación: <b>{estado_comercial}</b></div>
-                        <div class="prediction-sub">Nivel: <b>{confianza_texto}</b></div>
+                        <div class="prediction-sub">Nivel Rentabilidad: <b>{nivel_rentabilidad}</b></div>
+                        <div class="prediction-sub">Margen: <b>{margen:.1f}%</b></div>
                     </div>
                     """,
                     unsafe_allow_html=True
                 )
             with col_res2:
-                st.plotly_chart(grafico_gauge(confianza_visual, "📈 Score de Rentabilidad"), use_container_width=True)
+                st.plotly_chart(grafico_gauge(confianza_visual, f"📈 Margen de Rentabilidad\n{margen:.1f}%"), 
+                               use_container_width=True)
             
-            col_m1, col_m2, col_m3 = st.columns(3)
+            # Mostrar métricas en columnas
+            col_m1, col_m2, col_m3, col_m4 = st.columns(4)
             with col_m1:
-                st.metric("💰 Subtotal base", f"${subtotal:,.2f}")
+                st.metric("💰 Subtotal", f"${subtotal:,.2f}", help="Suma de precios de exámenes")
             with col_m2:
-                st.metric("🏥 Costo simulado", f"${costo_total:,.2f}")
+                st.metric("💵 Total Factura (Predicho)", f"${total_factura:,.2f}", 
+                         delta=f"${total_factura - subtotal:.2f}", help="Incluye impuestos")
             with col_m3:
-                st.metric("📈 Ganancia estimada", f"${ganancia:,.2f}")
+                st.metric("🏥 Costo Real", f"${costo_real:,.2f}", 
+                         help=f"{costo_porcentaje}% del subtotal")
+            with col_m4:
+                st.metric("📈 Ganancia Neta", f"${ganancia:,.2f}", 
+                         delta=f"{margen:.1f}% margen", help="Total - Costo")
             
-            st.markdown(generar_explicacion(subtotal, ganancia, margen, resultado), unsafe_allow_html=True)
+            # Explicación dinámica
+            if estado_comercial == "Excelente":
+                st.markdown(f"""
+                <div class="info-box-green">
+                {emoji} <b>¡Excelente operación!</b> El modelo XGBoost estima un total de factura de <b>${total_factura:,.2f}</b>.<br>
+                Con un costo real de <b>${costo_real:,.2f}</b> ({costo_porcentaje}% del subtotal) y una ganancia de <b>${ganancia:,.2f}</b>, 
+                el margen de rentabilidad es del <b>{margen:.1f}%</b>, considerado <b>Excelente</b> para el sector.<br>
+                🎯 <b>Recomendación:</b> Mantener esta estructura de precios.
+                </div>
+                """, unsafe_allow_html=True)
+            elif estado_comercial == "Rentable":
+                st.markdown(f"""
+                <div class="info-box-green">
+                {emoji} <b>Operación Rentable</b> - El modelo predice <b>${total_factura:,.2f}</b> de facturación.<br>
+                La ganancia estimada es de <b>${ganancia:,.2f}</b> con un margen del <b>{margen:.1f}%</b>, 
+                considerado <b>Rentable</b> para el laboratorio.<br>
+                📊 <b>Recomendación:</b> El negocio es viable, buscar optimizar costos para mejorar margen.
+                </div>
+                """, unsafe_allow_html=True)
+            elif estado_comercial == "Aceptable":
+                st.markdown(f"""
+                <div class="info-box-yellow">
+                {emoji} <b>Rentabilidad Aceptable</b> - Factura estimada: <b>${total_factura:,.2f}</b><br>
+                Margen actual: <b>{margen:.1f}%</b> - Ganancia: <b>${ganancia:,.2f}</b><br>
+                ⚠️ <b>Recomendación:</b> Revisar estructura de precios o reducir costos operativos.
+                </div>
+                """, unsafe_allow_html=True)
+            elif estado_comercial == "Margen bajo":
+                st.markdown(f"""
+                <div class="info-box-yellow">
+                {emoji} <b>Margen de Beneficio Bajo</b> - El modelo predice <b>${total_factura:,.2f}</b><br>
+                El margen actual es de solo <b>{margen:.1f}%</b> con ganancia de <b>${ganancia:,.2f}</b><br>
+                🔧 <b>Recomendación:</b> Analizar costos, aumentar precios o mejorar eficiencia operativa.
+                </div>
+                """, unsafe_allow_html=True)
+            elif estado_comercial == "Punto de equilibrio":
+                st.markdown(f"""
+                <div class="info-box-yellow">
+                {emoji} <b>Punto de Equilibrio</b> - Factura estimada: <b>${total_factura:,.2f}</b><br>
+                Los costos igualan a los ingresos, no hay ganancia.<br>
+                🚨 <b>Recomendación:</b> Urgente revisar precios y reducir costos para generar rentabilidad.
+                </div>
+                """, unsafe_allow_html=True)
+            else:
+                st.markdown(f"""
+                <div class="info-box-red">
+                {emoji} <b>OPERACIÓN CON PÉRDIDA</b> - El modelo predice <b>${total_factura:,.2f}</b><br>
+                Los costos (<b>${costo_real:,.2f}</b>) superan los ingresos, generando pérdida de <b>${abs(ganancia):,.2f}</b><br>
+                🚨 <b>ACCIÓN INMEDIATA:</b> Revisar urgentemente precios, descuentos y estructura de costos.
+                </div>
+                """, unsafe_allow_html=True)
             
-            with st.expander("🔧 Ver datos enviados al modelo"):
+            with st.expander("🔧 Ver datos enviados al modelo XGBoost"):
                 st.dataframe(datos_modelo, use_container_width=True)
+                st.caption("El modelo utiliza estas 9 features para predecir el Total de factura")
                 
         except Exception as e:
             st.error("❌ Ocurrió un error al realizar la predicción.")
